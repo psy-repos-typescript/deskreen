@@ -123,9 +123,34 @@ jobs:
 
       - name: pnpm build on Windows
         if: ${{ matrix.platform == 'windows' }}
+        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ${{ matrix.build_command }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          # 1. Pre-install the Azure Trusted Signing module
+          # This prevents electron-builder from running the buggy 'install' sub-routine
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name TrustedSigning -AllowPrerelease -Force -Scope CurrentUser
+          
+          $ErrorActionPreference = 'Stop'
+          $attempts = 3
+          for ($i = 1; $i -le $attempts; $i++) {
+            Write-Host "Build attempt $($i)/$($attempts)"
+            
+            # Execute the pnpm script directly in the shell
+            # We use 'pnpm run' instead of 'cmd /c' to avoid extra shell escaping layers
+            pnpm run ${{ matrix.build_command == 'pnpm build:win' && 'build:win' || (matrix.build_command == 'pnpm build:win:ia32' && 'build:win:ia32' || 'build:win:arm64') }}
+            
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -lt $attempts) {
+              Write-Host "Build failed. Retrying in 20s..."
+              Start-Sleep -Seconds 20
+            }
+          }
+          exit $LASTEXITCODE
 
       - name: pnpm build on macOS
         if: ${{ matrix.platform == 'macos' }}
